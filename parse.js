@@ -21,22 +21,23 @@ function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=fal
   if (depth > 12) return esc(src);
   let out='', i=0, plain='';
   const nodes=[], delimiters=[];
+  const plainRun=/[^\\`<![\*_~&\s(]+/y;
   const masked=[];for(const z of src.matchAll(/``[^`]*`[^`]*?\]\([^)]*\)[^`]*`/g))masked.push([z.index,z.index+z[0].length]);for(const z of src.matchAll(/\[[^\]\n]*``[^`]*`[^`]+``[^\]\n]+\](?:\([^\n]*?\)|\[[^\]]*\])/g))masked.push([z.index,z.index+z[0].length]);for(let k=0;k<src.length;k++){if(src[k]==='`'){const z=codeSpan(src.slice(k));if(z){if(z[1].length===2&&/^``[^`]*`[^`]*?\]\(/.test(z[0]))masked.push([k,k+z[0].length]);k+=z[0].length-1;}}}
   const save=()=>{flush();if(out){nodes.push({html:out});out='';}};
   const punct=c=>/[\p{P}\p{S}]/u.test(c);
   const space=c=>!c||/\s/u.test(c);
   const flush=()=>{ if(plain){out+=esc(plain);plain='';} };
   while(i<src.length) {
-    const rest=src.slice(i); let m;
-    if ((m=codeSpan(rest))) { flush(); let t=m[2].replace(/\n/g,' '); if(/^ .* $/.test(t)&&/[^ ]/.test(t)) t=t.slice(1,-1); out+=textOnly?esc(t):'<code>'+esc(t)+'</code>'; i+=m[0].length; continue; }
-    if ((m=/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/.exec(rest))) { flush();out+=esc(m[1]);i+=m[0].length;continue; }
-    if ((m=/^ {2,}\n[ \t]*|^\\\n[ \t]*/.exec(rest))) {flush();out+='<br>';i+=m[0].length;continue;}
-    if (!checkLinks && (m=/^<([a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\x00-\x20<>]*)>/.exec(rest))) {flush();out+='<a href="'+cleanUrl(m[1])+'">'+esc(m[1])+'</a>';i+=m[0].length;continue;}
-    if (!checkLinks && (m=/^<([a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)>/.exec(rest))) {flush();out+='<a href="'+cleanUrl('mailto:'+m[1])+'">'+esc(m[1])+'</a>';i+=m[0].length;continue;}
-    if ((m=/^<!--(?:-?>|[^]*?-->)|^<![A-Z][^>]*>|^<!\[CDATA\[[^]*?\]\]>|^<\/[A-Za-z][A-Za-z0-9-]*\s*>|^<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:"[^"\x00]*"|'[^'\x00]*'|[^\s"'=<>`]+))?)*\s*\/?>|^<\?[\s\S]*?\?>/.exec(rest))) {flush();if(checkLinks){out+='';i+=m[0].length;continue;}if(/^<a(?:\s|>)/i.test(m[0]))refs[linkState]=inLink=true;else if(/^<\/a\s*>/i.test(m[0]))refs[linkState]=inLink=false;out+=m[0];i+=m[0].length;continue;}
-    if(!inLink&&(i===0||/[\s(<]/.test(src[i-1]))&&delimiters.some(d=>d.ch==='_'&&d.open&&d.len>=1)&&(m=/^(?:mailto:|xmpp:)?[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?=_{1,2}(?!\w))/.exec(rest))){flush();out+='<a href="'+href(m[0].includes(':')?m[0]:'mailto:'+m[0])+'">'+esc(m[0])+'</a>';i+=m[0].length;continue;}
-    if ((i===0||/[\s(<]/.test(src[i-1])) && (m=/^(?:mailto:|xmpp:)?[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+[_-](?![A-Za-z0-9])/.exec(rest))) {plain+=m[0];i+=m[0].length;continue;}
-    if (!inLink && (m=/^([hH][tT][tT][pP][sS]?:\/\/[^\s<>]+|www\.[^\s<>]+|(?:mailto:|xmpp:)?[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?!(?:[\w-]))(?:\/[A-Za-z0-9@._+-]+)?)/.exec(rest)) && (i===0||/[\s(<]/.test(src[i-1]))) {flush();let v=m[0], prev;for(let k=0;k<v.length;k++)if(v[k]==='('){let end=v.indexOf(')',k+1);if(end<0){v=v.slice(0,k);break;}k=end;}do{prev=v;v=v.replace(/(?:[?!.,:;*_~]+|&[a-zA-Z0-9]+;)$/,'');if(v.endsWith(')')){let balance=0,unmatched=false;for(const c of v){if(c==='(')balance++;else if(c===')'){unmatched=balance===0;if(balance)balance--;}}if(unmatched)v=v.slice(0,-1);}}while(v!==prev);let u=v.startsWith('www.')?'http://'+v:v.includes('@')&&!v.includes(':')?'mailto:'+v:v;out+='<a href="'+href(u)+'">'+esc(v)+'</a>';i+=v.length;continue;}
+    const rest=src.slice(i), ch=src[i], boundary=i===0||/[\s(<]/.test(src[i-1]); let m;
+    if (ch==='`' && (m=codeSpan(rest))) { flush(); let t=m[2].replace(/\n/g,' '); if(/^ .* $/.test(t)&&/[^ ]/.test(t)) t=t.slice(1,-1); out+=textOnly?esc(t):'<code>'+esc(t)+'</code>'; i+=m[0].length; continue; }
+    if (ch==='\\' && (m=/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/.exec(rest))) { flush();out+=esc(m[1]);i+=m[0].length;continue; }
+    if ((ch===' '||ch==='\\') && (m=/^ {2,}\n[ \t]*|^\\\n[ \t]*/.exec(rest))) {flush();out+='<br>';i+=m[0].length;continue;}
+    if (ch==='<' && !checkLinks && (m=/^<([a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\x00-\x20<>]*)>/.exec(rest))) {flush();out+='<a href="'+cleanUrl(m[1])+'">'+esc(m[1])+'</a>';i+=m[0].length;continue;}
+    if (ch==='<' && !checkLinks && (m=/^<([a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)>/.exec(rest))) {flush();out+='<a href="'+cleanUrl('mailto:'+m[1])+'">'+esc(m[1])+'</a>';i+=m[0].length;continue;}
+    if (ch==='<' && (m=/^<!--(?:-?>|[^]*?-->)|^<![A-Z][^>]*>|^<!\[CDATA\[[^]*?\]\]>|^<\/[A-Za-z][A-Za-z0-9-]*\s*>|^<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:"[^"\x00]*"|'[^'\x00]*'|[^\s"'=<>`]+))?)*\s*\/?>|^<\?[\s\S]*?\?>/.exec(rest))) {flush();if(checkLinks){out+='';i+=m[0].length;continue;}if(/^<a(?:\s|>)/i.test(m[0]))refs[linkState]=inLink=true;else if(/^<\/a\s*>/i.test(m[0]))refs[linkState]=inLink=false;out+=m[0];i+=m[0].length;continue;}
+    if(!inLink&&boundary&&delimiters.some(d=>d.ch==='_'&&d.open&&d.len>=1)&&(m=/^(?:mailto:|xmpp:)?[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?=_{1,2}(?!\w))/.exec(rest))){flush();out+='<a href="'+href(m[0].includes(':')?m[0]:'mailto:'+m[0])+'">'+esc(m[0])+'</a>';i+=m[0].length;continue;}
+    if (boundary && (m=/^(?:mailto:|xmpp:)?[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+[_-](?![A-Za-z0-9])/.exec(rest))) {plain+=m[0];i+=m[0].length;continue;}
+    if (!inLink && boundary && (m=/^([hH][tT][tT][pP][sS]?:\/\/[^\s<>]+|www\.[^\s<>]+|(?:mailto:|xmpp:)?[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?!(?:[\w-]))(?:\/[A-Za-z0-9@._+-]+)?)/.exec(rest)) && boundary) {flush();let v=m[0], prev;for(let k=0;k<v.length;k++)if(v[k]==='('){let end=v.indexOf(')',k+1);if(end<0){v=v.slice(0,k);break;}k=end;}do{prev=v;v=v.replace(/(?:[?!.,:;*_~]+|&[a-zA-Z0-9]+;)$/,'');if(v.endsWith(')')){let balance=0,unmatched=false;for(const c of v){if(c==='(')balance++;else if(c===')'){unmatched=balance===0;if(balance)balance--;}}if(unmatched)v=v.slice(0,-1);}}while(v!==prev);let u=v.startsWith('www.')?'http://'+v:v.includes('@')&&!v.includes(':')?'mailto:'+v:v;out+='<a href="'+href(u)+'">'+esc(v)+'</a>';i+=v.length;continue;}
     if (rest[0]==='[' || (rest[0]==='!'&&rest[1]==='[')) {
       const image=rest[0]==='!', start=image?2:1;let j=start,level=1;
       for(;j<rest.length&&level;j++){if(rest[j]==='\\'){j++;continue;}if(rest[j]==='`'){const z=codeSpan(rest.slice(j));if(z&&!(z[1].length>1&&/\][([]/.test(z[0]))){j+=z[0].length-1;continue;}}
@@ -56,10 +57,11 @@ function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=fal
         if(target!==null&&!/``[^`]*`[^`]+``.+/.test(label)&&!(!image&&/<a href=/.test(inline(label,refs,depth+1,false,true,true)))){flush();if(textOnly)out+=inline(label,refs,depth+1,true);else if(image)out+='<img src="'+href(target)+'" alt="'+inline(label,refs,depth+1,true)+'"'+(title?' title="'+attr(unesc(title))+'"':'')+'>';else out+='<a href="'+href(target)+'"'+(title?' title="'+attr(unesc(title))+'"':'')+'>'+inline(label,refs,depth+1,false,true)+'</a>';i+=used;continue;}
       }
     }
-    if (!masked.some(([a,b])=>i>=a&&i<b)&&(m=/^[*_]+/.exec(rest))) {
+    if ((ch==='*'||ch==='_')&&!masked.some(([a,b])=>i>=a&&i<b)&&(m=/^[*_]+/.exec(rest))) {
       const ch=rest[0], run=new RegExp('^'+(ch==='*'?'\\*':'_')+'+').exec(rest)[0];
       save();
-      const before=Array.from(src.slice(0,i)).pop()||'', after=Array.from(src.slice(i+run.length))[0]||'';
+      const prev=src.charCodeAt(i-1), prev2=src.charCodeAt(i-2);
+      const before=i?src.slice(i-(prev>=0xdc00&&prev<=0xdfff&&prev2>=0xd800&&prev2<=0xdbff?2:1),i):'', after=i+run.length<src.length?String.fromCodePoint(src.codePointAt(i+run.length)):'';
       const left=!space(after)&&(!punct(after)||space(before)||punct(before));
       const right=!space(before)&&(!punct(before)||space(after)||punct(after));
       const d={ch,original:run.length,len:run.length,open:left&&(ch==='*'||!right||punct(before)),close:right&&(ch==='*'||!left||punct(after))};
@@ -69,11 +71,12 @@ function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=fal
       const run=/^~+/.exec(rest)[0];
       if(run.length<=2){save();const d={ch:'~',len:run.length,open:!/[\s~]/.test(rest[run.length]||' '),close:!/\s/.test(src[i-1]||' ')};nodes.push(d);delimiters.push(d);i+=run.length;continue;}
     }
-    if ((m=/^&#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6});/.exec(rest))) {flush();const n=m[0][2].toLowerCase()==='x'?parseInt(m[0].slice(3,-1),16):+m[0].slice(2,-1);out+=esc(String.fromCodePoint(!n||n>0x10ffff||(n>=0xd800&&n<=0xdfff)?0xfffd:n));i+=m[0].length;continue;}
+    if (ch==='&' && (m=/^&#(?:[0-9]{1,7}|[xX][0-9a-fA-F]{1,6});/.exec(rest))) {flush();const n=m[0][2].toLowerCase()==='x'?parseInt(m[0].slice(3,-1),16):+m[0].slice(2,-1);out+=esc(String.fromCodePoint(!n||n>0x10ffff||(n>=0xd800&&n<=0xdfff)?0xfffd:n));i+=m[0].length;continue;}
     if (src[i]==='&' && (m=/^&[a-z][\da-z]*;/i.exec(rest))) {flush();out+=m[0];i+=m[0].length;continue;}
     if(src[i]==='~'){const run=/^~+/.exec(rest)[0];plain+=run;i+=run.length;continue;}
     if(src[i]==='`'){const run=/^`+/.exec(rest)[0];plain+=run;i+=run.length;continue;}
     plain+=src[i++];
+    if(!/[\s(<]/.test(src[i-1])){plainRun.lastIndex=i;const run=plainRun.exec(src);if(run){plain+=run[0];i=plainRun.lastIndex;}}
   }
   save();
   for(let ci=0;ci<delimiters.length;ci++){
@@ -148,7 +151,7 @@ function tokenize(source, refs, def) {
       if((m=/^ {0,3}(`{3,}(?!`)|~{3,})(.*)$/.exec(s))&&(m[1][0]==='~'||!m[2].includes('`'))){const indent=m[1][0]==='~'?0:s.length-s.trimStart().length,mark=m[1],body=[];i++;while(i<input.length&&!new RegExp('^ {0,3}'+mark[0]+'{'+mark.length+',}\\s*$').test(input[i]))body.push(indent&&rawInput[i].startsWith('\t')?rawInput[i++].slice(1):dedent(rawInput[i++],indent));if(i<input.length)i++;emit({type:'code',text:body.join('\n')+(body.length&&body.at(-1)!==''?'\n':''),info:m[2].trim().split(/\s+/)[0]||''});continue;}
       if(/^ {4}/.test(s)){const body=[];while(i<input.length&&(/^ {4}/.test(input[i])||blank(input[i]))){body.push(dedent(rawInput[i],4));i++;}while(body.length&&!body.at(-1))body.pop();if(body.length)emit({type:'code',text:body.join('\n')+'\n'});continue;}
       def.lastIndex=0;
-      const definition=def.exec(input.slice(i).join('\n'));
+      const definition=/^ {0,3}\[/.test(s)?def.exec(input.slice(i).join('\n')):null;
       if(definition&&definition.index===0){const [all,label,url,a,b,c]=definition;if(label.trim()&&!/(?<!\\)\[/.test(label)&&!/\n[ \t]*\n/.test(label)&&![a,b,c].some(x=>x!==undefined&&/\n[ \t]*\n/.test(x))){const key=label.trim().toLowerCase().toUpperCase().toLowerCase().replace(/\s+/g,' ');if(!(key in refs))refs[key]={url:url.replace(/^<|>$/g,''),title:a??b??c??''};emit({type:'definition'});i+=all.split('\n').length-(all.endsWith('\n')?1:0);continue;}}
       if((m=/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*)$/.exec(s))){emit({type:'heading',level:m[1].length,text:m[2].replace(/(?:^|[ \t]+)#+[ \t]*$/,'').trim()});i++;continue;}
       if(/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(s)){emit({type:'hr'});i++;continue;}
@@ -213,6 +216,9 @@ function tokenize(source, refs, def) {
   }
   return blocks(lines);
 }
+function hasAnchor(tokens) {
+  return tokens.some(t=> /<a(?:\s|>)/i.test(t.text||'') || (t.children&&hasAnchor(t.children)) || (t.items&&t.items.some(item=>hasAnchor(item.children))) || (t.head&&t.head.some(s=>/<a(?:\s|>)/i.test(s))) || (t.rows&&t.rows.some(row=>row.some(s=>/<a(?:\s|>)/i.test(s)))));
+}
 function render(tokens, refs, parentLoose=false) {
   let out='';
   for(const t of tokens){
@@ -222,7 +228,7 @@ function render(tokens, refs, parentLoose=false) {
     else if(t.type==='hr')out+='<hr>\n';
     else if(t.type==='html')out+=t.text;
     else if(t.type==='blockquote')out+='<blockquote>\n'+render(t.children,refs)+'</blockquote>\n';
-    else if(t.type==='list'){const tag=t.ordered?'ol':'ul';out+='<'+tag+(t.ordered&&t.start!==1?' start="'+t.start+'"':'')+'>\n';for(const original of t.items){let item=original,checkbox='';const first=item.children[0],task=first?.type==='paragraph'&&/^\[([ xX])\][ \t]+/.exec(first.text);if(task){checkbox='<input '+(task[1]!==' '?'checked="" ':'')+'disabled="" type="checkbox"> ';item={...item,children:[{...first,text:first.text.slice(task[0].length)},...item.children.slice(1)]};}let body=render(item.children,refs,t.items.some(x=>x.loose));if(!t.items.some(x=>x.loose))body=item.children.map((child,k)=>child.type==='paragraph'?inline(child.text,refs):render([child],refs)).join('');if(checkbox)body=body.startsWith('<p>')?'<p>'+checkbox+body.slice(3):checkbox+body;out+='<li>'+body+'</li>\n';}out+='</'+tag+'>\n';}
+    else if(t.type==='list'){const tag=t.ordered?'ol':'ul';out+='<'+tag+(t.ordered&&t.start!==1?' start="'+t.start+'"':'')+'>\n';for(const original of t.items){let item=original,checkbox='';const first=item.children[0],task=first?.type==='paragraph'&&/^\[([ xX])\][ \t]+/.exec(first.text);if(task){checkbox='<input '+(task[1]!==' '?'checked="" ':'')+'disabled="" type="checkbox"> ';item={...item,children:[{...first,text:first.text.slice(task[0].length)},...item.children.slice(1)]};}let body;if(t.items.some(x=>x.loose)||hasAnchor(item.children))body=render(item.children,refs,t.items.some(x=>x.loose));if(!t.items.some(x=>x.loose))body=item.children.map((child,k)=>child.type==='paragraph'?inline(child.text,refs):render([child],refs)).join('');if(checkbox)body=body.startsWith('<p>')?'<p>'+checkbox+body.slice(3):checkbox+body;out+='<li>'+body+'</li>\n';}out+='</'+tag+'>\n';}
     else if(t.type==='table'){out+='<table>\n<thead>\n<tr>\n';for(let k=0;k<t.head.length;k++)out+='<th'+(t.align[k]?' align="'+t.align[k]+'"':'')+'>'+inline(t.head[k],refs)+'</th>\n';out+='</tr>\n</thead>\n';if(t.rows.length){out+='<tbody>';for(const row of t.rows){out+='<tr>\n';for(let k=0;k<t.head.length;k++)out+='<td'+(t.align[k]?' align="'+t.align[k]+'"':'')+'>'+inline(row[k]||'',refs)+'</td>\n';out+='</tr>\n';}out+='</tbody>';}out+='</table>\n';}
   }
   return out;

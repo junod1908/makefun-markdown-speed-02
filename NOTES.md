@@ -304,3 +304,81 @@ Full-score milestones saved to `parse.js.best`: 681, 683, 689, 690, 691,
 required documents were revised before proceeding. Final `parse.js` and
 `parse.js.best` are identical. `parse.js.bak680` is untouched. No commit was
 made and no files outside this repo were modified.
+
+## Session 2026-11-16: speed optimization — 720/720 retained
+
+Final scorer: `node ../dev/score.mjs` => **PASS 720/720** (2383 ms,
+including scorer overhead). `parse.js` and `parse.js.best` are identical.
+No commit, cross-call caching, dependencies, or historical-backup edits.
+
+`bench.mjs` imports this renderer and a fresh `Marked` instance, warms each
+once over all 720 practice cases, and reports the best of three full passes.
+Starting profiled benchmark: ours **2741.0 ms**, marked **704.6 ms**.
+Final unprofiled benchmark after restoring the best implementation:
+
+- Ours: 1154.4, 1121.1, **1034.2 ms**.
+- Marked: **679.5**, 683.8, 693.4 ms.
+- Approximately **2.65x faster** than the measured starting renderer;
+  still **1.52x** marked's render time.
+
+Retained optimizations (each passed the full scorer before benchmarking):
+
+- Only join remaining block lines and run the definition regex when the
+  current line can start a reference definition. Best: 2020.4 ms.
+- Read neighboring Unicode code points directly for delimiter flanking,
+  preserving surrogate-pair behavior, instead of Array.from on full prefixes
+  and suffixes. Best: 1880.0 ms.
+- Bulk-copy ordinary inline text after the boundary character has been
+  processed, stopping at syntax, whitespace, and possible autolink boundaries.
+  Best: 1373.0 ms.
+- Guard inline recognizers by their required first character and evaluate
+  autolink boundary conditions before running the URL regex. Best: 1009.6 ms
+  (marked 672.1 ms in that run).
+
+CPU profiles identified repeated definition scans, inline dispatch, and
+allocation as the main costs. An additional 10,000 deterministic mixed-syntax
+inputs matched the original renderer byte-for-byte, including surrogate input.
+This supplements, rather than replaces, the full practice scorer.
+
+Rejected trials were restored and the restoration rescored: an early small
+regex-guard trial (1919.2 ms), then after the final improvement, skipping
+backtick masks / delimiter output allocation (1027.2 ms) and sharing the HTML
+escape lookup/callback (1063.9 ms). Stopped after those final **two consecutive
+non-improvements**, as requested; marked's speed target was not reached.
+Timing varies between runs; the final fresh measurement above is authoritative.
+
+## Session 2026-11-16: generated-only speed profiling
+
+Baseline `node bench.mjs`: ours best **1039.8 ms**, marked best **682.5 ms**
+(ratio 1.52x). A CPU profile over only the 40 generated documents (warmup plus
+five passes, `node --cpu-prof profile-docs.mjs`) found these parse.js
+self-time hotspots: `inline` **2015** aggregated ticks, `render` **612**, and
+`blocks` **309**; helper `esc` accounted for **207**. The paragraph render call (line 223) had **535** ticks; within `inline`,
+mask construction (line 25) had **313**, and delimiter/URL handling
+(lines 79/57) **388/138**. These are the targets for
+the optimization attempts below.
+
+First optimization attempt: direct scanning instead of allocating a regex for
+delimiter runs passed 720/720 but measured 1034.3/674.2 ms (1.53x), worse
+than the baseline ratio, so it was reverted.
+
+Second optimization attempt targeted `render` and its repeated calls into
+`inline`: tight list items rendered every child twice and discarded the first
+result. Skip that first pass when the item's token subtree has no possible raw
+anchor opener. Preserve the old double pass for possible `<a>` tags because
+its link-state side effects affect output (for example `- www.a.com <a>`).
+The guard inspects text, descendants, and table cells; no cross-call cache.
+A whole-document guard was tested first but unnecessarily disabled the
+optimization across generated documents, so the guard is local to each item.
+
+Final full scorer: **PASS 720/720**. An additional **10,000** deterministic
+mixed list/anchor cases matched the session-start renderer byte-for-byte.
+Final benchmarks (best of three full practice passes):
+
+- Ours **841.7 ms**, marked **702.8 ms**, ratio **1.198x**.
+- Confirmation: ours **837.4 ms**, marked **706.2 ms**, ratio **1.186x**.
+
+Saved the passing, faster implementation to `parse.js.best`; it matches
+`parse.js`. Stopped at the requested 1.0–1.2 ratio. No commit or files outside
+this repo were modified. Profiling artifacts: `profile-docs.mjs` and
+`docs.cpuprofile`; original session implementation: `parse.js.session-start`.
