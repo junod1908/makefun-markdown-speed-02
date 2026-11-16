@@ -16,6 +16,12 @@ function codeSpan(src) {
   return null;
 }
 
+// ASCII syntax and boundary classification; non-ASCII whitespace keeps JS semantics.
+const inlineAction = new Uint8Array(128);
+for (const c of "\\`<![*_~&(!") inlineAction[c.charCodeAt(0)] = 1;
+for (let c=0;c<128;c++) if (/\s/.test(String.fromCharCode(c))) inlineAction[c] = 2;
+const inlineBoundary = c => c === undefined || c === '(' || c === '<' || (c.charCodeAt(0)<128 ? inlineAction[c.charCodeAt(0)]===2 : /\s/.test(c));
+
 function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=false) {
   inLink ||= !!refs[linkState];
   if (depth > 12) return esc(src);
@@ -28,7 +34,14 @@ function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=fal
   const space=c=>!c||/\s/u.test(c);
   const flush=()=>{ if(plain){out+=esc(plain);plain='';} };
   while(i<src.length) {
-    const rest=src.slice(i), ch=src[i], boundary=i===0||/[\s(<]/.test(src[i-1]); let m;
+    const ch=src[i], boundary=i===0||inlineBoundary(src[i-1]);
+    const code=src.charCodeAt(i);
+    if (!boundary && (code<128 ? inlineAction[code]===0 : !/\s/.test(ch))) {
+      plainRun.lastIndex=i;
+      const run=plainRun.exec(src);
+      if(run){plain+=run[0];i=plainRun.lastIndex;continue;}
+    }
+    const rest=src.slice(i); let m;
     if (ch==='`' && (m=codeSpan(rest))) { flush(); let t=m[2].replace(/\n/g,' '); if(/^ .* $/.test(t)&&/[^ ]/.test(t)) t=t.slice(1,-1); out+=textOnly?esc(t):'<code>'+esc(t)+'</code>'; i+=m[0].length; continue; }
     if (ch==='\\' && (m=/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/.exec(rest))) { flush();out+=esc(m[1]);i+=m[0].length;continue; }
     if ((ch===' '||ch==='\\') && (m=/^ {2,}\n[ \t]*|^\\\n[ \t]*/.exec(rest))) {flush();out+='<br>';i+=m[0].length;continue;}
@@ -76,7 +89,7 @@ function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=fal
     if(src[i]==='~'){const run=/^~+/.exec(rest)[0];plain+=run;i+=run.length;continue;}
     if(src[i]==='`'){const run=/^`+/.exec(rest)[0];plain+=run;i+=run.length;continue;}
     plain+=src[i++];
-    if(!/[\s(<]/.test(src[i-1])){plainRun.lastIndex=i;const run=plainRun.exec(src);if(run){plain+=run[0];i=plainRun.lastIndex;}}
+    if(!inlineBoundary(src[i-1])){plainRun.lastIndex=i;const run=plainRun.exec(src);if(run){plain+=run[0];i=plainRun.lastIndex;}}
   }
   save();
   for(let ci=0;ci<delimiters.length;ci++){
@@ -84,13 +97,18 @@ function inline(src, refs, depth=0, textOnly=false, inLink=false, checkLinks=fal
     while(closer.close&&closer.len){
       let oi=ci-1;
       for(;oi>=0;oi--){const opener=delimiters[oi];
-        if(opener.len===2&&closer.len===1&&nodes.slice(nodes.indexOf(opener)+1,nodes.indexOf(closer)).some(n=>/<(?:em|strong)>/.test(n.html||''))&&delimiters.slice(ci+1).some(d=>d.ch===closer.ch&&d.close&&d.len>=2))continue;
-        if(opener.len&&opener.open&&opener.ch===closer.ch&&(closer.ch!=='~'||opener.len===closer.len)&& !(closer.ch!=='~'&&(opener.close||closer.open)&&(opener.len+closer.len)%3===0&&(opener.len%3!==0||closer.len%3!==0)))break;
+        if(!opener.len||!opener.open||opener.ch!==closer.ch||(closer.ch==='~'&&opener.len!==closer.len)||(closer.ch!=='~'&&(opener.close||closer.open)&&(opener.len+closer.len)%3===0&&(opener.len%3!==0||closer.len%3!==0)))continue;
+        if(opener.len===2&&closer.len===1){
+          let nested=false;
+          for(let n=nodes.indexOf(opener)+1,end=nodes.indexOf(closer);n<end;n++)if(/<(?:em|strong)>/.test(nodes[n].html||'')){nested=true;break;}
+          if(nested){let later=false;for(let n=ci+1;n<delimiters.length;n++){const d=delimiters[n];if(d.ch===closer.ch&&d.close&&d.len>=2){later=true;break;}}if(later)continue;}
+        }
+        break;
       }
       if(oi<0)break;
       const opener=delimiters[oi], use=opener.len>=2&&closer.len>=2?2:1;
       const a=nodes.indexOf(opener), b=nodes.indexOf(closer), tag=closer.ch==='~'?'del':use===2?'strong':'em';
-      let body=nodes.slice(a+1,b).map(n=>n.html??n.ch.repeat(n.len)).join('');
+      let body='';for(let n=a+1;n<b;n++){const node=nodes[n];body+=node.html??node.ch.repeat(node.len);}
       if(use===1&&closer.ch==='*'&&opener.original===1&&/(?:^|\s)<strong>[^]*<\/strong>[\p{L}\p{N}]/u.test(body)){opener.open=false;continue;}
       if(use===2&&opener.len===2&&closer.len===3&&/<\/em>[\p{L}\p{N}]+$/u.test(body)){body+='*';closer.len--;}
       nodes.splice(a+1,b-a-1,{html:(textOnly?'':'<'+tag+'>')+body+(textOnly?'':'</'+tag+'>')});
@@ -140,7 +158,12 @@ function tokenize(source, refs, def) {
   // Each recursive block parse owns its line array and emits structured tokens.
   function blocks(rawInput, inList=false) {
     const breaks = s => {const m=listMark(s); return m && !thematic(s) && (m[3]||'').trim() && (!/\d/.test(m[1]) || +m[1].slice(0,-1)===1 || inList);};
-    const input=rawInput.map(line=>line.replace(/^[ \t]+/,ws=>{let col=0;for(const c of ws)col+=c==='\t'?4-col%4:1;return ' '.repeat(col);}));
+    const input=new Array(rawInput.length);
+    for(let n=0;n<rawInput.length;n++){
+      const line=rawInput[n];let j=0,col=0,tab=false;
+      while(j<line.length){const c=line.charCodeAt(j);if(c===32)col++;else if(c===9){col+=4-col%4;tab=true;}else break;j++;}
+      input[n]=tab?' '.repeat(col)+line.slice(j):line;
+    }
     const dedent=(line,n)=>{let col=0,j=0;while(j<line.length&&col<n&&/[ \t]/.test(line[j])){col+=line[j++]==='\t'?4-col%4:1;}return ' '.repeat(Math.max(0,col-n))+line.slice(j);};
     const tokens=[]; let i=0, blankSeen=false, before=false;
     const emit=t=>{t.blankBefore=before;tokens.push(t);};
@@ -209,7 +232,7 @@ function tokenize(source, refs, def) {
         }
       }
       const para=[s];i++;
-      while(i<input.length&&!blank(input[i])){if(htmlKind(input[i])&&htmlKind(input[i])<7)break;if(/^ {0,3}(?:=+|-+)[ \t]*$/.test(input[i]))break;if(/^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$|`{3,}(?!`)[^`]*$|~{3,})/.test(input[i])||breaks(input[i]))break;para.push(/\[[^\]]*$/.test(para.join('\n'))?input[i++]:input[i++]);}
+      while(i<input.length&&!blank(input[i])){if(htmlKind(input[i])&&htmlKind(input[i])<7)break;if(/^ {0,3}(?:=+|-+)[ \t]*$/.test(input[i]))break;if(/^ {0,3}(?:#{1,6}(?:\s|$)|>|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$|`{3,}(?!`)[^`]*$|~{3,})/.test(input[i])||breaks(input[i]))break;para.push(input[i++]);}
       if(i<input.length&&(m=/^ {0,3}(=+|-+)[ \t]*$/.exec(input[i]))){emit({type:'heading',level:m[1][0]==='='?1:2,text:para.join('\n').trim()});i++;}else emit({type:'paragraph',text:para.join('\n')});
     }
     return tokens;

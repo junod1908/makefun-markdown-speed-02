@@ -382,3 +382,60 @@ Saved the passing, faster implementation to `parse.js.best`; it matches
 `parse.js`. Stopped at the requested 1.0–1.2 ratio. No commit or files outside
 this repo were modified. Profiling artifacts: `profile-docs.mjs` and
 `docs.cpuprofile`; original session implementation: `parse.js.session-start`.
+
+## Session 2026-11-16: final engineering pass (session 15)
+
+Both entrypoint and renderer finished and verified. No commit, dependencies,
+cross-call caching, or writes outside this repo.
+
+`main.ts`: retain one synchronous UTF-8 read, one JSON parse, one ordered render
+loop, one JSON serialization, and one write. Reuse the parsed cases array for
+HTML strings instead of allocating a second array; replacing each consumed case
+also releases its reference earlier. Keep path joining and environment defaults.
+Ran the README entrypoint exactly with Node 24.22.1:
+
+```
+MAKEFUN_INPUT_DIR=../markdown-render-speed-02-kit/practice/input MAKEFUN_OUTPUT_DIR=.verify-output node main.ts
+```
+
+`cmp` confirmed byte-identical serialized output against the reference HTML
+array in input case order (720 cases). The kit's actual `expected.json` is a
+metadata object with groups and `{id, group, html}` records, not an entrypoint
+output array, so literal whole-file comparison to it cannot pass the required
+harness format. Reference projection uses case IDs and JSON.stringify once.
+Also ran the original session-start main.ts and confirmed the same bytes.
+
+`parse.js`: three retained structural attempts, each independently followed by
+the full scorer and bench.mjs; no failing or slower attempt was retained:
+
+1. Precompute an ASCII syntax/whitespace action table. Dispatch ordinary runs
+   before creating a remaining-source slice or visiting recognizers; share
+   boundary classification, retaining Unicode whitespace semantics.
+2. Scan leading line indentation directly, expanding only prefixes containing
+   tabs and reusing unchanged lines. Remove repeated paragraph joining and
+   regex matching whose conditional selected identical expressions. This also
+   removes quadratic copying as paragraphs grow.
+3. Reject incompatible delimiter openers before checking nested emphasis;
+   scan node/delimiter ranges directly instead of slice/some allocations and
+   assemble matched bodies directly instead of slice/map/join arrays.
+
+Benchmarks below report best of three full practice passes, milliseconds:
+
+| Revision | Ours | marked | Ours / marked |
+| --- | ---: | ---: | ---: |
+| Session-start baseline | 864.3 | 681.5 | 1.268x |
+| After main.ts change (renderer unchanged) | 879.5 | 676.5 | 1.300x |
+| Inline dispatch | 840.0 | 669.4 | 1.255x |
+| Block line handling | 706.2 | 668.7 | 1.056x |
+| Delimiter processing | 698.0 | 673.6 | 1.036x |
+| Final confirmation | 720.9 | 673.3 | 1.071x |
+
+Final confirmation individual passes: ours 943.7, 737.6, 720.9 ms; marked
+707.7, 673.3, 738.4 ms. Final scorer **PASS 720/720** (1867 ms including
+scorer overhead). An additional 10,000 deterministic mixed-syntax inputs,
+including Unicode whitespace, surrogate input, links, delimiters, lists, tabs,
+and HTML, matched the session-start renderer byte-for-byte. Final entrypoint
+output was rechecked after all renderer changes. `parse.js.best` was updated
+only after each passing, faster attempt and is byte-identical to `parse.js`.
+Stopped with both files verified and the requested below-1.19x target met.
+Temporary verification files were removed.
